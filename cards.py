@@ -1,12 +1,13 @@
-#import numpy
+import numpy
 import random, itertools
-#import pylab
+import pylab
 
 class Cards(object):#generates numDecks decks of cards. 
 	def __init__(self, numDecks):
 		self.numDecks = numDecks
 		self.cards = list(itertools.product(range(1,14),['Clubs', 'Diamonds', 'Hearts', 'Spades'], range(numDecks)))
 		self.count = 0
+
 
 	def getCards(self): #Returns list of cards
 		return self.cards
@@ -39,12 +40,30 @@ class Player(object):
 		self.bust = False
 		self.doubledhands = []
 		self.wincount = 0	
+		self.doublecount = 0
+		self.splitcount = 0
+		self.pushcount = 0
+		self.doubleloss = 0
 	
 	def getBank(self):
 		return self.bank
 
+	def splitCount(self):
+		return self.splitcount
+
+	def getPushCount(self):
+		return self.pushcount
+	def clearDoubledHands(self):
+		self.doubledhands = []
+
+	def doubleCount(self):
+		return self.doublecount
+
 	def getWinCount(self):
 		return self.wincount
+
+	def addWinCount(self):
+		self.wincount+=1
 
 	def clearWinCount(self):
 		self.wincount = 0
@@ -94,8 +113,7 @@ class Player(object):
 							return 'Hit'
 						else:
 							return 'Double'
-					if hand.getBJTotal() >= 5:
-						return 'Hit'
+					return 'Hit'
 
 				if hand.getBJTotal() not in {10, 11}:
 					return 'Hit'
@@ -104,10 +122,9 @@ class Player(object):
 						return 'Double'
 					else:
 						return 'Hit'  
-				if dealerCard == 1:
-					return 'Hit'
-				else:
-					return 'Double'
+
+				return 'Double'
+			
 			else:
 				if hand.getCards()[0][0] in {2, 3}:
 					if dealerCard in {2,3,4,5,6,7}:
@@ -131,7 +148,6 @@ class Player(object):
 						return 'Hit'
 					if hand.getCards()[0][0] == 7:
 						if dealerCard == 7:
-							print "how often"
 							return 'Split'
 						return 'Hit'
 					if hand.getCards()[0][0] == 8:
@@ -195,22 +211,34 @@ class Player(object):
 
 	def turn(self,hand,dealerCard, deck):
 		#This function simulates a players turn
+		if hand.finalBJTotal() == 21 and len(hand.getCards())== 2:
+			return
 		while self.optimalHit(hand, dealerCard) != 'Stand':
-			if self.optimalHit(hand, dealerCard) == 'Hit':
+			choice = self.optimalHit(hand, dealerCard)
+			if choice == 'Hit':
 				hand.newCard(deck)
 				self.turn(hand, dealerCard, deck)
-			if self.optimalHit(hand, dealerCard) == 'Double':
+			if choice == 'Double':
+				self.doublecount += 1
+
 				hand.newCard(deck)
 				self.doubledhands.append(self.hand.index(hand))
 				break
-			if self.optimalHit(hand, dealerCard) == 'Split':
+			if choice == 'Split':
 				self.split(hand,deck)
+				self.splitcount+=1
 				for hand in self.getHands():
 					self.turn(hand, dealerCard, deck)
 
 	def update(self, bet, dealer):
 		#determines if a player wins agains the dealer and edits bank accounts accordingly
 		for h in self.hand:
+			if len(h.getCards()) == 2 and h.finalBJTotal() == 21:
+				if h.push != True:
+					dealer.deposit(-float(bet) * 1.5)
+					self.deposit(float(bet) * 1.5)
+					self.wincount+=1
+			
 			x = 1
 			if len(self.doubledhands) > 0:
 				for i in self.doubledhands:
@@ -218,14 +246,17 @@ class Player(object):
 						x = 2
 			if h.bust() == False and dealer.getHand(1).bust() ==True:
 					self.deposit(x * bet)
-					dealer.deposit(-(x * bet))
 					self.wincount+=1
 			else:
 				if h.bust() == True or h.underDealer(dealer) == True:
 					self.deposit(- (x * bet))
 					dealer.deposit(x * bet)
+					if x == 2:
+						self.doubleloss +=1
+					dealer.wincount+=1
 				else:
 					if h.push(dealer) == True:
+						dealer.pushcount +=1
 						pass
 					else:
 						self.deposit(x * bet)
@@ -295,12 +326,7 @@ class Hand(object):
 def roundBJ(deck, players, bets):
 	deck.deal(players, 2)
 	for i in range(len(players[:-1])):
-		if players[i].getHand(1).finalBJTotal() == 21:
-			players[i].deposit(float(bets[i]) * 1.5)
-			players[-1].deposit(-float(bets[i]) * 1.5)
-			players[i].clearHand()
-		else:
-			players[i].turn(players[i].getHand(1),players[-1].getHand(1).getCards()[0][0], deck)
+		players[i].turn(players[i].getHand(1),players[-1].getHand(1).getCards()[0][0], deck)
 
 	while players[-1].dealerHit() == True:
 		players[-1].getHand(1).newCard(deck)
@@ -308,34 +334,81 @@ def roundBJ(deck, players, bets):
 	for i in range(len(players[:-1])):
 		players[i].update(bets[i], players[-1])
 		players[i].clearHand()
+		players[i].clearDoubledHands()
 	players[-1].clearHand()
 	
+def roundBJdealerBJloses(deck, players, bets):
+	deck.deal(players, 2)
+	dc = players[-1].getHand(1).getCards()[0][0]
+	if dc == 1 and players[-1].getHand(1).getCards()[1][0] >= 10:
+		for i in range(len(players[:-1])):
+			players[i].update(bets[i], players[-1])
+			players[i].clearHand()
+			players[i].clearDoubledHands()
+	else:
+		for i in range(len(players[:-1])):
+			players[i].turn(players[i].getHand(1),dc, deck)
 
+		while players[-1].dealerHit() == True:
+			players[-1].getHand(1).newCard(deck)
+
+		for i in range(len(players[:-1])):
+			players[i].update(bets[i], players[-1])
+			players[i].clearHand()
+			players[i].clearDoubledHands()
+	players[-1].clearHand()
 
 
 
 #Simulation
-deck = Cards(15)
+deck = Cards(6)
 deck.shuffle()
-
-joe = Player(0)
-bob = Player(0)
-doug = Player(0)
-dealer = Player(0)
-players = [joe,bob,doug,dealer]
+def initiatePlayers(numPlayers):
+	return [Player(0) for i in range(numPlayers + 1)]
 
 
-# for turns in range(10000):
-# 	if deck.getCount() > len(deck.getCards())- 6*len(players):
-# 		deck.shuffle()
-# 	roundBJ(deck, players,[1,1,1])
+def simulationBlackJack(players, bets, deck, numHands):
+	for i in range(numHands):
+ 		if deck.getCount() > len(deck.getCards()) - random.randint(50, 100):
+ 			deck.shuffle()
+ 		roundBJdealerBJloses(deck,players[0],bets)
+ 		roundBJ(deck,players[1],bets)
+
+winPercent = []
+wp2 = []
+dCount =[]
+sCount = []
+bank = []
+
+for i in range(100):
+
+	players = [initiatePlayers(1), initiatePlayers(1)]
+	
+	simulationBlackJack(players, [1], deck, 10000)
+	
+	winPercent.append(players[0][0].getWinCount()/float(10000)*100)
+	wp2.append(players[1][0].getWinCount()/float(10000)*100)
+
+	# dCount.append(players[0].doubleCount())
+	# sCount.append(players[0].splitCount())
+	# bank.append(players[0].getBank())
+
+print numpy.average(wp2)
+print numpy.average(winPercent)
+
+pylab.plot(winPercent)
+pylab.plot(wp2)
+pylab.legend(("Dealer BJ Not Win " + str(numpy.average(winPercent)), "DealerBJwins " + str(numpy.average(wp2))))
+pylab.xlabel("Trial number")
+pylab.ylabel("Win Percentage after 10000 Hands")
+pylab.title("100 trials of 10000 hands of BlackJack")
+pylab.axhline(50)
+pylab.show()
 
 
 
 
-# for p in players[:-1]:
-# 	print "Win percentage = ", p.getWinCount()/float(10000)*100
-# 	print p.getBank()
+
 # print dealer.getBank()
 
 # print deck.getCount()
@@ -497,5 +570,3 @@ def oneplayer():
 		print "You have $",usr.getBank()
 		print "Again? y or n"
 		playagain = raw_input()
-
-oneplayer()
